@@ -23,3 +23,17 @@
 [2026-04-24T13:58:21.789+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
 [2026-04-24T14:03:22.781+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
 [2026-04-24T14:03:22.785+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
+[2026-04-24T14:08:23.092+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
+[2026-04-24T14:08:23.098+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
+[2026-04-24T14:13:23.100+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
+[2026-04-24T14:13:23.138+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
+[2026-04-24T14:18:23.254+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
+[2026-04-24T14:18:23.260+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
+[2026-04-24T14:23:23.552+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
+[2026-04-24T14:23:23.558+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
+[2026-04-24T14:28:24.420+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
+[2026-04-24T14:28:24.425+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
+[2026-04-24T14:33:24.661+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
+[2026-04-24T14:33:24.665+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags
+[2026-04-24T14:38:25.698+0000] {manager.py:737} INFO - Searching for files in /opt/airflow/dags
+[2026-04-24T14:38:25.705+0000] {manager.py:740} INFO - There are 0 files in /opt/airflow/dags

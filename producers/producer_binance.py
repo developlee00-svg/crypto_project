@@ -23,6 +23,9 @@ async def run_producer():
     symbols = get_common_symbols()
     producer = create_kafka_producer()
 
+    # 중복 제거: 이전 가격과 동일하면 스킵
+    last_prices: dict[str, float] = {}
+
     # Binance miniTicker 스트림 이름: <symbol>usdt@miniTicker
     streams = [f"{s.lower()}usdt@miniTicker" for s in symbols]
 
@@ -64,6 +67,11 @@ async def run_producer():
                         symbol = raw_symbol.replace("USDT", "")
 
                         price = float(data["c"])  # 현재가 (close)
+
+                        # 중복 제거: 이전과 같은 가격이면 스킵
+                        if last_prices.get(symbol) == price:
+                            continue
+                        last_prices[symbol] = price
 
                         msg = normalize_message(
                             exchange="binance",

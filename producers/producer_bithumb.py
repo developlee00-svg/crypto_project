@@ -45,6 +45,9 @@ async def run_producer():
     codes = [f"KRW-{s}" for s in target_symbols]
     logger.info(f"Bithumb 구독 종목 수: {len(codes)}")
 
+    # 중복 제거: 이전 가격과 동일하면 스킵
+    last_prices: dict[str, float] = {}
+
     while True:
         try:
             async with websockets.connect(
@@ -85,6 +88,11 @@ async def run_producer():
                         symbol = code.replace("KRW-", "")
 
                         price = float(data["trade_price"])  # 현재가
+
+                        # 중복 제거: 이전과 같은 가격이면 스킵
+                        if last_prices.get(symbol) == price:
+                            continue
+                        last_prices[symbol] = price
 
                         msg = normalize_message(
                             exchange="bithumb",
