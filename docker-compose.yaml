@@ -189,6 +189,23 @@ services:
         condition: service_healthy
     restart: always
 
+  # ============================================================
+  # Kafka → Kinesis 브릿지 Consumer
+  # ============================================================
+  kafka-kinesis-bridge:
+    build: ./kafka-kinesis-bridge
+    container_name: kafka-kinesis-bridge
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KINESIS_STREAM_NAME: crypto-stream-input
+      AWS_REGION: ap-northeast-2
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: always
+
 volumes:
   mysql-data:
   airflow-pg-data:
