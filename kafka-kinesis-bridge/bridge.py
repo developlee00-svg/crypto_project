@@ -2,6 +2,7 @@
 Kafka → Kinesis Data Streams 브릿지 Consumer
 - 3개 Kafka 토픽(crypto-prices-binance/upbit/bithumb) 구독
 - 정규화된 메시지를 그대로 KDS(crypto-stream-input)에 배치 전송
+- confluent-kafka 사용 (Python 3.14 호환)
 """
 import os
 import json
@@ -12,7 +13,9 @@ import logging
 from threading import Event
 
 import boto3
-from kafka import KafkaConsumer
+from confluent_kafka import Consumer, KafkaError
+from dotenv import load_dotenv
+load_dotenv()
 
 # ============================================================
 # 설정
@@ -55,7 +58,6 @@ def create_kinesis_client():
         "service_name": "kinesis",
         "region_name": AWS_REGION,
     }
-    # 로컬 테스트 시 자격 증명이 없으면 환경 변수 / IAM 역할에 위임
     if AWS_ACCESS_KEY and AWS_SECRET_KEY:
         kwargs["aws_access_key_id"] = AWS_ACCESS_KEY
         kwargs["aws_secret_access_key"] = AWS_SECRET_KEY
@@ -66,21 +68,20 @@ def create_kinesis_client():
 
 
 # ============================================================
-# Kafka Consumer
+# Kafka Consumer (confluent-kafka)
 # ============================================================
 
-def create_consumer() -> KafkaConsumer:
-    """Kafka Consumer 생성 (3개 토픽 구독)"""
-    consumer = KafkaConsumer(
-        *TOPICS,
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        group_id=KAFKA_GROUP_ID,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        auto_commit_interval_ms=5000,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        consumer_timeout_ms=1000,   # poll 타임아웃 → 배치 주기 제어용
-    )
+def create_consumer() -> Consumer:
+    """confluent-kafka Consumer 생성 (3개 토픽 구독)"""
+    conf = {
+        "bootstrap.servers": KAFKA_BOOTSTRAP,
+        "group.id": KAFKA_GROUP_ID,
+        "auto.offset.reset": "latest",
+        "enable.auto.commit": True,
+        "auto.commit.interval.ms": 5000,
+    }
+    consumer = Consumer(conf)
+    consumer.subscribe(TOPICS)
     logger.info(f"Kafka Consumer 생성 완료 (topics: {TOPICS})")
     return consumer
 
@@ -111,26 +112,34 @@ def send_batch(kinesis_client, records: list[dict]) -> int:
     max_retries = 3
 
     while entries and retry_count < max_retries:
-        resp = kinesis_client.put_records(
-            StreamName=KINESIS_STREAM,
-            Records=entries,
-        )
+        try:
+            resp = kinesis_client.put_records(
+                StreamName=KINESIS_STREAM,
+                Records=entries,
+            )
+        except Exception as e:
+            logger.error(f"Kinesis put_records 호출 실패: {type(e).__name__}: {e}")
+            return total_sent
 
         failed_count = resp.get("FailedRecordCount", 0)
         sent_count = len(entries) - failed_count
         total_sent += sent_count
 
         if failed_count == 0:
+            entries = []
             break
 
-        # 실패한 레코드만 추출하여 재시도
         retry_entries = []
         for i, result in enumerate(resp["Records"]):
             if "ErrorCode" in result:
                 retry_entries.append(entries[i])
-                logger.warning(
-                    f"Kinesis 전송 실패: {result['ErrorCode']} - {result.get('ErrorMessage', '')}"
-                )
+                if i < 3:
+                    logger.warning(
+                        f"Kinesis 전송 실패 [{i}]: {result['ErrorCode']} - {result.get('ErrorMessage', '')}"
+                    )
+
+        if len(retry_entries) > 3:
+            logger.warning(f"  ... 외 {len(retry_entries) - 3}건 동일 에러")
 
         entries = retry_entries
         retry_count += 1
@@ -163,10 +172,15 @@ def run_bridge():
 
     try:
         while not shutdown_event.is_set():
-            # consumer_timeout_ms=1000 이므로 최대 1초 대기 후 StopIteration
-            try:
-                for message in consumer:
-                    batch.append(message.value)
+            msg = consumer.poll(timeout=1.0)
+
+            if msg is not None:
+                if msg.error():
+                    if msg.error().code() != KafkaError._PARTITION_EOF:
+                        logger.warning(f"Consumer 에러: {msg.error()}")
+                else:
+                    data = json.loads(msg.value().decode("utf-8"))
+                    batch.append(data)
 
                     # 배치 사이즈 도달 시 전송
                     if len(batch) >= BATCH_SIZE:
@@ -178,13 +192,7 @@ def run_bridge():
                         batch.clear()
                         last_flush = time.time()
 
-                    if shutdown_event.is_set():
-                        break
-
-            except StopIteration:
-                pass
-
-            # 타임아웃 기반 플러시: 배치에 데이터가 있으면 전송
+            # 타임아웃 기반 플러시
             elapsed = time.time() - last_flush
             if batch and elapsed >= BATCH_TIMEOUT_SEC:
                 sent = send_batch(kinesis_client, batch)
@@ -198,7 +206,6 @@ def run_bridge():
     except Exception as e:
         logger.error(f"브릿지 오류: {e}", exc_info=True)
     finally:
-        # 잔여 배치 전송
         if batch:
             sent = send_batch(kinesis_client, batch)
             total_forwarded += sent

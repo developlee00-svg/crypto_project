@@ -1,0 +1,17 @@
+[
+  {
+    "PropertyGroupId": "kinesis",
+    "PropertyMap": {
+      "input.stream": "crypto-stream-input",
+      "output.stream": "crypto-stream-output",
+      "region": "ap-northeast-2"
+    }
+  },
+  {
+    "PropertyGroupId": "s3",
+    "PropertyMap": {
+      "rate.bucket": "de-ai-04-827913617635-ap-northeast-2-an",
+      "rate.key": "exchange-rate/usd_krw.json"
+    }
+  }
+]
