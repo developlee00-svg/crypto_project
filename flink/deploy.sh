@@ -1,71 +1,109 @@
 #!/bin/bash
 # ============================================================
-# Flink 아비트라지 앱 배포 스크립트
-#
-# 순서:
-#   1. Maven으로 Uber JAR 빌드 (Kinesis + JDBC + MySQL 커넥터)
-#   2. main.py + JAR → ZIP 패키징
-#   3. S3 업로드
-#
-# 사전 조건:
-#   - JDK 11, Maven, AWS CLI 설치
-#   - AWS 자격 증명 설정 완료
-#
-# 사용법:
-#   chmod +x deploy.sh
-#   ./deploy.sh                                    # 기본 버킷
-#   ./deploy.sh my-flink-bucket ap-northeast-2     # 커스텀 버킷
+# Flink 아비트라지 앱 배포 스크립트 (v5)
+# - venv는 Step 3 (boto3 다운로드)에만 한정
+# - S3 업로드는 수동
 # ============================================================
 
 set -euo pipefail
 
-S3_BUCKET="${1:-crypto-flink-app}"
-AWS_REGION="${2:-ap-northeast-2}"
 APP_NAME="crypto-arbitrage"
 ZIP_FILE="${APP_NAME}.zip"
+BUILD_VENV=".build-venv"
 
 echo "=== Step 1: Maven 의존성 빌드 ==="
 mvn clean package -q
 echo "  → target/pyflink-dependencies.jar 생성 완료"
 
 echo ""
-echo "=== Step 2: ZIP 패키징 ==="
-# 기존 ZIP 제거
+echo "=== Step 2: 빌드 전용 venv 준비 ==="
+if [ ! -d "${BUILD_VENV}" ]; then
+    python -m venv "${BUILD_VENV}"
+    echo "  → ${BUILD_VENV} 생성"
+fi
+echo "  → venv 준비 완료"
+
+echo ""
+echo "=== Step 3: boto3 의존성 다운로드 (Linux x86_64 호환) ==="
+rm -rf deps
+mkdir -p deps
+
+# venv를 서브셸 안에서만 사용 → activate/deactivate가 외부 PATH에 영향 주지 않음
+(
+    if [ -f "${BUILD_VENV}/Scripts/activate" ]; then
+        source "${BUILD_VENV}/Scripts/activate"
+    elif [ -f "${BUILD_VENV}/bin/activate" ]; then
+        source "${BUILD_VENV}/bin/activate"
+    else
+        echo "  ✗ venv activate 스크립트를 찾을 수 없음"
+        exit 1
+    fi
+
+    pip install \
+      --platform manylinux2014_x86_64 \
+      --target=deps \
+      --implementation cp \
+      --python-version 3.11 \
+      --only-binary=:all: \
+      --upgrade \
+      boto3 \
+      --quiet
+)
+
+if [ ! -d "deps/boto3" ]; then
+    echo "  ✗ deps/boto3 디렉토리가 생성되지 않음"
+    exit 1
+fi
+echo "  → deps/ 패키지 수: $(ls deps | wc -l)"
+
+echo ""
+echo "=== Step 4: ZIP 패키징 (Python zipfile) ==="
 rm -f "${ZIP_FILE}"
 
-# ZIP 구조:
-#   crypto-arbitrage.zip
-#   ├── main.py
-#   └── lib/
-#       └── pyflink-dependencies.jar
 mkdir -p lib
 cp target/pyflink-dependencies.jar lib/
 
-zip -r "${ZIP_FILE}" main.py lib/
-echo "  → ${ZIP_FILE} 생성 완료"
+python <<EOF
+import os
+import zipfile
 
-# 정리
-rm -rf lib
+ZIP_FILE = "${ZIP_FILE}"
+EXCLUDE_PATTERNS = ('.dist-info', '__pycache__', '.pyc')
+
+def should_skip(path):
+    return any(pat in path for pat in EXCLUDE_PATTERNS)
+
+with zipfile.ZipFile(ZIP_FILE, 'w', zipfile.ZIP_DEFLATED) as zf:
+    zf.write('main.py', 'main.py')
+
+    for root, dirs, files in os.walk('lib'):
+        for f in files:
+            full = os.path.join(root, f)
+            arc = full.replace(os.sep, '/')
+            zf.write(full, arc)
+
+    deps_root = 'deps'
+    for root, dirs, files in os.walk(deps_root):
+        dirs[:] = [d for d in dirs if not should_skip(d)]
+        for f in files:
+            if should_skip(f):
+                continue
+            full = os.path.join(root, f)
+            rel = os.path.relpath(full, deps_root)
+            arc = rel.replace(os.sep, '/')
+            zf.write(full, arc)
+
+size_mb = os.path.getsize(ZIP_FILE) / (1024 * 1024)
+with zipfile.ZipFile(ZIP_FILE, 'r') as zf:
+    count = len(zf.namelist())
+print(f"  → {ZIP_FILE} 생성 완료 ({size_mb:.1f} MB, {count} files)")
+EOF
+
+rm -rf lib deps
 
 echo ""
-echo "=== Step 3: S3 업로드 ==="
-aws s3 cp "${ZIP_FILE}" "s3://${S3_BUCKET}/${ZIP_FILE}" --region "${AWS_REGION}"
-echo "  → s3://${S3_BUCKET}/${ZIP_FILE} 업로드 완료"
-
+echo "=== 빌드 완료 ==="
 echo ""
-echo "=== 배포 패키지 준비 완료 ==="
-echo ""
-echo "다음 단계: AWS 콘솔에서 Managed Flink 애플리케이션 생성"
-echo "  - 런타임: Apache Flink 1.20"
-echo "  - 코드 위치: s3://${S3_BUCKET}/${ZIP_FILE}"
-echo "  - 런타임 프로퍼티 설정 필요 (아래 참고)"
-echo ""
-echo "런타임 프로퍼티 (PropertyGroupId: 'kinesis'):"
-echo "  input.stream   = crypto-stream-input"
-echo "  output.stream  = crypto-stream-output"
-echo "  region         = ${AWS_REGION}"
-echo ""
-echo "런타임 프로퍼티 (PropertyGroupId: 'mysql'):"
-echo "  url      = jdbc:mysql://<RDS_ENDPOINT>:3306/crypto_arbitrage"
-echo "  username = <USERNAME>"
-echo "  password = <PASSWORD>"
+echo "다음 단계 (수동):"
+echo "  1. aws s3 cp ${ZIP_FILE} s3://<BUCKET>/crypto-flink-app/${ZIP_FILE} --region ap-northeast-2"
+echo "  2. AWS 콘솔 → Flink Application Stop → Run"

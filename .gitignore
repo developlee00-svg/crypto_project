@@ -211,3 +211,10 @@ __marimo__/
 # git rm -r --cached logs/
 logs/
 logs/**
+
+
+.build-venv/
+deps/
+lib/
+crypto-arbitrage.zip
+target/

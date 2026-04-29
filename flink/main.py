@@ -2,6 +2,7 @@
 Crypto Arbitrage Detection - Flink SQL Application
 - 3 exchanges (Binance, Upbit, Bithumb) interval join
 - Detects arbitrage opportunities (Kimchi premium)
+- Exchange rate: S3 직접 읽기 (Airflow가 매 1시간 갱신)
 """
 
 import os
@@ -24,6 +25,45 @@ def get_application_properties():
 
 
 # ============================================================
+# 환율 로드 (S3 → 폴백: Runtime Property → 폴백: 1370.0)
+# ============================================================
+def load_exchange_rate(s3_props: dict) -> float:
+    """
+    S3에서 환율 JSON 읽기. 실패 시 Runtime Property 폴백, 그것도 실패 시 1370.0.
+
+    S3 파일 포맷 (Airflow가 매 1시간 갱신):
+        {
+            "base": "USD",
+            "target": "KRW",
+            "rate": 1473.25,
+            "fetched_at": "2026-04-29T10:00:00Z"
+        }
+    """
+    bucket = s3_props.get("rate.bucket")
+    key = s3_props.get("rate.key")
+    fallback = float(s3_props.get("usd.krw.rate", "1370.0"))
+
+    if not bucket or not key:
+        print(f"[WARN] S3 bucket/key not configured. Using fallback: {fallback}")
+        return fallback
+
+    try:
+        import boto3
+        s3 = boto3.client("s3", region_name="ap-northeast-2")
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        body = obj["Body"].read().decode("utf-8")
+        data = json.loads(body)
+        rate = float(data["rate"])
+        print(f"[INFO] Loaded exchange rate from s3://{bucket}/{key}: {rate}")
+        print(f"[INFO] Fetched at: {data.get('fetched_at', 'N/A')}")
+        return rate
+    except Exception as e:
+        print(f"[ERROR] Failed to load rate from S3: {e}")
+        print(f"[WARN] Using fallback rate: {fallback}")
+        return fallback
+
+
+# ============================================================
 # main 함수
 # ============================================================
 def main():
@@ -31,17 +71,11 @@ def main():
     env_settings = EnvironmentSettings.in_streaming_mode()
     table_env = TableEnvironment.create(env_settings)
 
-    # JAR 의존성 (Managed Flink는 자동, 로컬 테스트는 필요시 설정)
-    # table_env.get_config().set(
-    #     "pipeline.jars",
-    #     "file:///opt/flink/usrlib/pyflink-dependencies.jar"
-    # )
-
-    # --- Runtime Property에서 환율 읽기 ---
+    # --- 환율 로드 (S3 우선, 폴백: Runtime Property) ---
     props = get_application_properties()
     s3_props = props.get("s3", {})
-    EXCHANGE_RATE = float(s3_props.get("usd.krw.rate", "1370.0"))
-    print(f"[INFO] Using exchange rate: {EXCHANGE_RATE}")
+    EXCHANGE_RATE = load_exchange_rate(s3_props)
+    print(f"[INFO] Final exchange rate applied to SQL: {EXCHANGE_RATE}")
 
     # ============================================================
     # 1. Source 테이블 (입력 KDS)
