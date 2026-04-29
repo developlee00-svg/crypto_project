@@ -1,7 +1,8 @@
 version: "3.8"
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.1-python3.11
+  build: ./airflow                           # ← image 대신 build
+  image: crypto-airflow:2.9.1                # ← 빌드된 이미지 태그 (선택)
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
@@ -9,12 +10,19 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-    # 프로젝트 MySQL 연결 정보 (Airflow DAG에서 사용)
+    # 프로젝트 MySQL 연결 정보
     CRYPTO_MYSQL_HOST: mysql
     CRYPTO_MYSQL_PORT: "3306"
     CRYPTO_MYSQL_USER: crypto
     CRYPTO_MYSQL_PASSWORD: crypto1234
     CRYPTO_MYSQL_DB: crypto_arbitrage
+    # AWS 자격 증명 (S3 업로드용) ← 추가
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_DEFAULT_REGION: ap-northeast-2
+    # S3 환율 파일 위치 ← 추가
+    S3_BUCKET: de-ai-04-827913617635-ap-northeast-2-an
+    S3_RATE_KEY: exchange-rate/usd_krw.json
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
