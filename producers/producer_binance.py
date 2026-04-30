@@ -11,7 +11,7 @@ import sys
 
 import websockets
 
-from common import create_kafka_producer, get_common_symbols, normalize_message
+from common import create_kafka_producer, get_symbols_for_exchange, normalize_message
 
 logger = logging.getLogger("producer-binance")
 
@@ -20,7 +20,7 @@ WS_URL = "wss://stream.binance.com:9443/ws"
 
 
 async def run_producer():
-    symbols = get_common_symbols()
+    symbols = get_symbols_for_exchange('binance')
     producer = create_kafka_producer()
 
     # 중복 제거: 이전 가격과 동일하면 스킵

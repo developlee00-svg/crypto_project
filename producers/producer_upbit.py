@@ -12,7 +12,7 @@ import uuid
 
 import websockets
 
-from common import create_kafka_producer, get_common_symbols, normalize_message
+from common import create_kafka_producer, get_symbols_for_exchange, normalize_message
 
 logger = logging.getLogger("producer-upbit")
 
@@ -21,7 +21,7 @@ WS_URL = "wss://api.upbit.com/websocket/v1"
 
 
 async def run_producer():
-    symbols = get_common_symbols()
+    symbols = get_symbols_for_exchange('upbit')
     producer = create_kafka_producer()
 
     # Upbit 코드 형식: "KRW-BTC", "KRW-ETH"

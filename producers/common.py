@@ -1,6 +1,7 @@
 """
 공통 유틸리티 모듈
-- Upbit/Binance/Bithumb 공통 상장 종목 조회
+- 시가총액 상위 50개 코인 (하드코딩)
+- 거래소별 실제 상장 종목 필터링
 - Kafka Producer 생성
 - 정규화된 메시지 스키마 생성
 """
@@ -22,7 +23,22 @@ KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
 
 # ============================================================
-# 공통 상장 종목 조회
+# 시가총액 상위 50개 (2026-03 기준 하드코딩)
+# ============================================================
+# 정책: Upbit/Binance/Bithumb 중 2개 이상 상장된 코인만 김프 산출 가능.
+# 1곳만 상장된 코인은 데이터가 1개 거래소에서만 들어와 프론트에서 빈 셀로 보임.
+# 이는 의도된 동작 — 50개 슬롯은 고정, 데이터 있는 칸만 채워짐.
+TOP_50_BY_MARKET_CAP: list[str] = [
+    "BTC", "ETH", "USDT", "XRP", "BNB", "USDC", "SOL", "TRX", "DOGE", "HYPE",
+    "LEO", "BCH", "ADA", "XMR", "LINK", "CC", "ZEC", "DAI", "XLM", "USD1",
+    "M", "LTC", "AVAX", "HBAR", "USDe", "SHIB", "SUI", "PYUSD", "TON", "CRO",
+    "TAO", "XAUt", "USDG", "PAXG", "MNT", "DOT", "UNI", "WLFI", "PI", "SKY",
+    "OKB", "NEAR", "ASTER", "PEPE", "AAVE", "ICP", "ETC", "ONDO", "ALGO", "WLD",
+]
+
+
+# ============================================================
+# 거래소별 상장 종목 조회
 # ============================================================
 
 def get_upbit_krw_symbols() -> set[str]:
@@ -57,7 +73,6 @@ def get_bithumb_krw_symbols() -> set[str]:
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     data = resp.json().get("data", {})
-    # data 안에 'date' 키는 제외
     return {
         symbol
         for symbol in data.keys()
@@ -65,32 +80,32 @@ def get_bithumb_krw_symbols() -> set[str]:
     }
 
 
-def get_common_symbols(limit: int = 100) -> list[str]:
+# ============================================================
+# 거래소별 구독 대상 산출
+# ============================================================
+
+def get_symbols_for_exchange(exchange: str) -> list[str]:
     """
-    Upbit-Binance 공통 상장 종목 조회.
-    Bithumb 공통 종목도 포함하되, 기본은 Upbit-Binance 교집합.
-    limit: 최대 종목 수
+    TOP_50 중 해당 거래소에 실제 상장된 심볼만 반환.
+    - exchange: "upbit" | "binance" | "bithumb"
+    - TOP_50 순서를 유지 (시가총액 순)
     """
-    upbit = get_upbit_krw_symbols()
-    binance = get_binance_usdt_symbols()
+    if exchange == "upbit":
+        listed = get_upbit_krw_symbols()
+    elif exchange == "binance":
+        listed = get_binance_usdt_symbols()
+    elif exchange == "bithumb":
+        listed = get_bithumb_krw_symbols()
+    else:
+        raise ValueError(f"Unknown exchange: {exchange}")
 
-    try:
-        bithumb = get_bithumb_krw_symbols()
-    except Exception as e:
-        logger.warning(f"Bithumb 종목 조회 실패, Upbit-Binance 교집합만 사용: {e}")
-        bithumb = set()
+    result = [s for s in TOP_50_BY_MARKET_CAP if s in listed]
+    excluded = [s for s in TOP_50_BY_MARKET_CAP if s not in listed]
 
-    # Upbit-Binance 공통 종목
-    common = upbit & binance
-    logger.info(f"Upbit({len(upbit)}) ∩ Binance({len(binance)}) = {len(common)}개")
-
-    if bithumb:
-        bithumb_common = common & bithumb
-        logger.info(f"Bithumb 공통 종목: {len(bithumb_common)}개")
-
-    symbols = sorted(common)[:limit]
-    logger.info(f"최종 수집 대상: {len(symbols)}개 → {symbols[:10]}...")
-    return symbols
+    logger.info(f"[{exchange}] TOP_50 중 상장 {len(result)}개, 미상장 {len(excluded)}개")
+    if excluded:
+        logger.info(f"[{exchange}] 미상장 제외: {excluded}")
+    return result
 
 
 # ============================================================

@@ -214,6 +214,59 @@ services:
         condition: service_healthy
     restart: always
 
+  # ============================================================
+  # Kinesis → MySQL 브릿지 (Day 9 신설)
+  # KDS crypto-stream-output → MySQL arbitrage_opportunities (Warm Layer)
+  # ============================================================
+  kinesis-mysql-bridge:
+    build:
+      context: ./kinesis-mysql-bridge
+      dockerfile: Dockerfile
+    container_name: kinesis-mysql-bridge
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # AWS
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ap-northeast-2
+      KDS_STREAM_NAME: crypto-stream-output
+      # MySQL (수정: crypto1234 / crypto_arbitrage)
+      CRYPTO_MYSQL_HOST: mysql
+      CRYPTO_MYSQL_PORT: "3306"
+      CRYPTO_MYSQL_USER: crypto
+      CRYPTO_MYSQL_PASSWORD: crypto1234
+      CRYPTO_MYSQL_DB: crypto_arbitrage
+    restart: unless-stopped
+
+  # ============================================================
+  # FastAPI 서빙 (Day 9 신설)
+  # /prices: Kafka 직접 consume / /opportunities, /exchange-rate, /stats/daily: MySQL
+  # ============================================================
+  fastapi:
+    build:
+      context: ./fastapi
+      dockerfile: Dockerfile
+    container_name: fastapi
+    ports:
+      - "8000:8000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    environment:
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # MySQL
+      CRYPTO_MYSQL_HOST: mysql
+      CRYPTO_MYSQL_PORT: "3306"
+      CRYPTO_MYSQL_USER: crypto
+      CRYPTO_MYSQL_PASSWORD: crypto1234
+      CRYPTO_MYSQL_DB: crypto_arbitrage
+    restart: unless-stopped
+
 volumes:
   mysql-data:
   airflow-pg-data:

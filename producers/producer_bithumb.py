@@ -18,7 +18,7 @@ import websockets
 
 from common import (
     create_kafka_producer,
-    get_common_symbols,
+    get_symbols_for_exchange,
     get_bithumb_krw_symbols,
     normalize_message,
 )
@@ -30,7 +30,7 @@ WS_URL = "wss://ws-api.bithumb.com/websocket/v1"
 
 
 async def run_producer():
-    symbols = get_common_symbols()
+    symbols = get_symbols_for_exchange('bithumb')
     producer = create_kafka_producer()
 
     # Bithumb에 상장된 공통 종목만 필터
