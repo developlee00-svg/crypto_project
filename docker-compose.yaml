@@ -267,6 +267,20 @@ services:
       CRYPTO_MYSQL_DB: crypto_arbitrage
     restart: unless-stopped
 
+  # ---------------------------------------------------------------
+  # Streamlit 대시보드 (Day 10)
+  # ---------------------------------------------------------------
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      FASTAPI_URL: http://fastapi:8000
+    depends_on:
+      - fastapi
+    restart: unless-stopped
+    
 volumes:
   mysql-data:
   airflow-pg-data:

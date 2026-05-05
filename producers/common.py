@@ -23,17 +23,27 @@ KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
 
 # ============================================================
-# 시가총액 상위 50개 (2026-03 기준 하드코딩)
+# 시가총액 상위 코인 (2026-03 기준 하드코딩)
 # ============================================================
 # 정책: Upbit/Binance/Bithumb 중 2개 이상 상장된 코인만 김프 산출 가능.
 # 1곳만 상장된 코인은 데이터가 1개 거래소에서만 들어와 프론트에서 빈 셀로 보임.
-# 이는 의도된 동작 — 50개 슬롯은 고정, 데이터 있는 칸만 채워짐.
+# 이는 의도된 동작 — 슬롯은 고정, 데이터 있는 칸만 채워짐.
+#
+# v11 (2026-05-05): 39 → 97개로 확장 (시총 상위 + 활발한 알트 포함).
+#   거래소별 미상장 심볼은 get_symbols_for_exchange()에서 자동 필터링되므로
+#   3거래소 모두 미상장이어도 producer 에러 없이 자연스럽게 제외됨.
+#   상수명은 의미 유지를 위해 TOP_50_BY_MARKET_CAP 그대로 둠.
 TOP_50_BY_MARKET_CAP: list[str] = [
-    "BTC", "ETH", "USDT", "XRP", "BNB", "USDC", "SOL", "TRX", "DOGE", "HYPE",
-    "LEO", "BCH", "ADA", "XMR", "LINK", "CC", "ZEC", "DAI", "XLM", "USD1",
-    "M", "LTC", "AVAX", "HBAR", "USDe", "SHIB", "SUI", "PYUSD", "TON", "CRO",
-    "TAO", "XAUt", "USDG", "PAXG", "MNT", "DOT", "UNI", "WLFI", "PI", "SKY",
-    "OKB", "NEAR", "ASTER", "PEPE", "AAVE", "ICP", "ETC", "ONDO", "ALGO", "WLD",
+    "BTC", "ETH", "XRP", "USDC", "SOL", "TRX", "DOGE", "USDS", "ADA", "BCH",
+    "LINK", "XLM", "USD1", "AVAX", "USDE", "HBAR", "SHIB", "SUI", "XAUT", "TAO",
+    "UNI", "DOT", "SKY", "WLFI", "NEAR", "PEPE", "AAVE", "ONDO", "ETC", "ICP",
+    "POL", "ALGO", "ATOM", "RENDER", "ENA", "APT", "WLD", "ARB", "JST", "FIL",
+    "PUMP", "PENGU", "VET", "JUP", "BONK", "TRUMP", "VIRTUAL", "CHZ", "STX", "XTZ",
+    "SEI", "INJ", "SUN", "ZRO", "ETHFI", "TIA", "SYRUP", "2Z", "PYTH", "KITE",
+    "GRT", "PENDLE", "OP", "IOTA", "AXS", "ENS", "XPL", "RAY", "COMP", "THETA",
+    "NEO", "SAND", "JTO", "MANA", "WAL", "MEGA", "ZK", "A", "FF", "BAT",
+    "XEC", "IMX", "GLM", "CHIP", "1INCH", "ORCA", "BIO",
+    "USDT", "BNB", "TON", "CRO", "MNT", "PAXG", "CC", "ZEC", "LTC", "ASTER",
 ]
 
 

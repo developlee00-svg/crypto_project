@@ -1,6 +1,9 @@
 """
-Crypto Arbitrage Detection - Flink SQL Application
-- 3 exchanges (Binance, Upbit, Bithumb) interval join
+Crypto Arbitrage Detection - Flink SQL Application (v13)
+- 3 exchanges (Binance, Upbit, Bithumb)
+- v13: Tumble Window Aggregation + Window Join
+  → 1초 슬라이스 단위로 거래소별 평균가 산출 후 같은 슬라이스끼리 매칭
+  → Interval Join Cartesian 폭증 차단, append-only 유지
 - Detects arbitrage opportunities (Kimchi premium)
 - Exchange rate: S3 직접 읽기 (Airflow가 매 1시간 갱신)
 """
@@ -30,14 +33,6 @@ def get_application_properties():
 def load_exchange_rate(s3_props: dict) -> float:
     """
     S3에서 환율 JSON 읽기. 실패 시 Runtime Property 폴백, 그것도 실패 시 1370.0.
-
-    S3 파일 포맷 (Airflow가 매 1시간 갱신):
-        {
-            "base": "USD",
-            "target": "KRW",
-            "rate": 1473.25,
-            "fetched_at": "2026-04-29T10:00:00Z"
-        }
     """
     bucket = s3_props.get("rate.bucket")
     key = s3_props.get("rate.key")
@@ -78,7 +73,7 @@ def main():
     print(f"[INFO] Final exchange rate applied to SQL: {EXCHANGE_RATE}")
 
     # ============================================================
-    # 1. Source 테이블 (입력 KDS)
+    # 1. Source 테이블 (입력 KDS) - 변경 없음
     # ============================================================
     table_env.execute_sql("""
         CREATE TABLE crypto_input (
@@ -103,7 +98,7 @@ def main():
     """)
 
     # ============================================================
-    # 2. Sink 테이블 (출력 KDS)
+    # 2. Sink 테이블 (출력 KDS) - 변경 없음
     # ============================================================
     table_env.execute_sql("""
         CREATE TABLE arbitrage_output (
@@ -126,13 +121,12 @@ def main():
     """)
 
     # ============================================================
-    # 3. 거래소별 뷰 분리 (Binance만 환율 적용)
+    # 3. 거래소별 KRW 환산 뷰 (event_time, watermark 보존)
     # ============================================================
     table_env.execute_sql(f"""
         CREATE TEMPORARY VIEW binance_enriched AS
         SELECT
             symbol,
-            `exchange`,
             CAST(price * {EXCHANGE_RATE} AS DECIMAL(20, 2)) AS price_krw,
             event_time
         FROM crypto_input
@@ -143,7 +137,6 @@ def main():
         CREATE TEMPORARY VIEW upbit_enriched AS
         SELECT
             symbol,
-            `exchange`,
             CAST(price AS DECIMAL(20, 2)) AS price_krw,
             event_time
         FROM crypto_input
@@ -154,7 +147,6 @@ def main():
         CREATE TEMPORARY VIEW bithumb_enriched AS
         SELECT
             symbol,
-            `exchange`,
             CAST(price AS DECIMAL(20, 2)) AS price_krw,
             event_time
         FROM crypto_input
@@ -162,7 +154,52 @@ def main():
     """)
 
     # ============================================================
-    # 4. INSERT INTO ... (3쌍 Interval Join + UNION ALL)
+    # 4. v13: 1초 Tumble Window 집약 (심볼당 1초 1건, append-only)
+    #    - AVG로 1초 안 여러 메시지 평균
+    #    - window_start: 1초 슬라이스의 시작 시각 (join key로 사용)
+    # ============================================================
+    table_env.execute_sql("""
+        CREATE TEMPORARY VIEW binance_1s AS
+        SELECT
+            symbol,
+            CAST(AVG(price_krw) AS DECIMAL(20, 2)) AS price_krw,
+            window_start,
+            window_end
+        FROM TABLE(
+            TUMBLE(TABLE binance_enriched, DESCRIPTOR(event_time), INTERVAL '1' SECOND)
+        )
+        GROUP BY symbol, window_start, window_end
+    """)
+
+    table_env.execute_sql("""
+        CREATE TEMPORARY VIEW upbit_1s AS
+        SELECT
+            symbol,
+            CAST(AVG(price_krw) AS DECIMAL(20, 2)) AS price_krw,
+            window_start,
+            window_end
+        FROM TABLE(
+            TUMBLE(TABLE upbit_enriched, DESCRIPTOR(event_time), INTERVAL '1' SECOND)
+        )
+        GROUP BY symbol, window_start, window_end
+    """)
+
+    table_env.execute_sql("""
+        CREATE TEMPORARY VIEW bithumb_1s AS
+        SELECT
+            symbol,
+            CAST(AVG(price_krw) AS DECIMAL(20, 2)) AS price_krw,
+            window_start,
+            window_end
+        FROM TABLE(
+            TUMBLE(TABLE bithumb_enriched, DESCRIPTOR(event_time), INTERVAL '1' SECOND)
+        )
+        GROUP BY symbol, window_start, window_end
+    """)
+
+    # ============================================================
+    # 5. INSERT INTO ... (3쌍 Window Join + UNION ALL)
+    #    같은 1초 슬라이스끼리만 매칭 (window_start 일치)
     # ============================================================
     table_env.execute_sql(f"""
         INSERT INTO arbitrage_output
@@ -180,12 +217,11 @@ def main():
                 AS DECIMAL(8, 4)
             ) AS spread_pct,
             CAST({EXCHANGE_RATE} AS DECIMAL(15, 6)) AS exchange_rate,
-            u.event_time AS detected_at
-        FROM upbit_enriched AS u
-        JOIN binance_enriched AS b
+            u.window_start AS detected_at
+        FROM upbit_1s AS u
+        JOIN binance_1s AS b
           ON u.symbol = b.symbol
-         AND u.event_time BETWEEN b.event_time - INTERVAL '3' SECOND
-                              AND b.event_time + INTERVAL '3' SECOND
+         AND u.window_start = b.window_start
 
         UNION ALL
 
@@ -202,12 +238,11 @@ def main():
                 AS DECIMAL(8, 4)
             ) AS spread_pct,
             CAST({EXCHANGE_RATE} AS DECIMAL(15, 6)) AS exchange_rate,
-            bt.event_time AS detected_at
-        FROM bithumb_enriched AS bt
-        JOIN binance_enriched AS b
+            bt.window_start AS detected_at
+        FROM bithumb_1s AS bt
+        JOIN binance_1s AS b
           ON bt.symbol = b.symbol
-         AND bt.event_time BETWEEN b.event_time - INTERVAL '3' SECOND
-                               AND b.event_time + INTERVAL '3' SECOND
+         AND bt.window_start = b.window_start
 
         UNION ALL
 
@@ -224,12 +259,11 @@ def main():
                 AS DECIMAL(8, 4)
             ) AS spread_pct,
             CAST({EXCHANGE_RATE} AS DECIMAL(15, 6)) AS exchange_rate,
-            u.event_time AS detected_at
-        FROM upbit_enriched AS u
-        JOIN bithumb_enriched AS bt
+            u.window_start AS detected_at
+        FROM upbit_1s AS u
+        JOIN bithumb_1s AS bt
           ON u.symbol = bt.symbol
-         AND u.event_time BETWEEN bt.event_time - INTERVAL '3' SECOND
-                              AND bt.event_time + INTERVAL '3' SECOND
+         AND u.window_start = bt.window_start
     """)
 
 
